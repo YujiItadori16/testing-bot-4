@@ -1,13 +1,13 @@
 <?php
 // ======================
-// Telegram PHP Bot — Channel Gate + Referrals + Leaderboard
+// Telegram PHP Bot — Channel Gate + Referrals (no chat commands)
 // Works on Render.com Docker Web Service (webhook-based)
 // ======================
 
 /*
 Env you can set in Render:
 - BOT_TOKEN
-- ADMIN_ID  (single ID; you can comma-separate multiple if needed)
+- ADMIN_ID  (kept but unused now; safe to leave)
 - CH1, CH1_LINK
 - CH2, CH2_LINK
 - CONTACT_LINK
@@ -19,7 +19,6 @@ ini_set('display_errors', 0);
 
 $BOT_TOKEN     = getenv('BOT_TOKEN') ?: 'CHANGE_ME';
 $API           = "https://api.telegram.org/bot{$BOT_TOKEN}";
-$ADMIN_IDS     = array_map('trim', explode(',', getenv('ADMIN_ID') ?: '1702919355'));
 $CH1           = getenv('CH1') ?: '@bigbumpersaleoffers';
 $CH1_LINK      = getenv('CH1_LINK') ?: 'https://t.me/bigbumpersaleoffers';
 $CH2           = getenv('CH2') ?: '@backupchannelbum';
@@ -78,7 +77,6 @@ function answerCallback($id, $text = '', $alert = false) {
 }
 
 function getMember($channel, $user_id) {
-    // channel must start with @ or be an ID
     return tg('getChatMember', [
         'chat_id' => $channel,
         'user_id' => $user_id
@@ -107,11 +105,6 @@ function saveData($fp, $data) {
     fflush($fp);
     flock($fp, LOCK_UN);
     fclose($fp);
-}
-
-function isAdmin($user_id) {
-    global $ADMIN_IDS;
-    return in_array((string)$user_id, array_map('strval',$ADMIN_IDS), true);
 }
 
 function inviteLinkFor($bot_username, $user_id) {
@@ -167,7 +160,6 @@ function inviteKeyboard($bot_username, $user_id) {
 }
 
 function forwardKeyboard($shareText) {
-    // Uses switch_inline_query to let user easily send/share this text to others.
     return [
         'inline_keyboard' => [
             [
@@ -267,15 +259,20 @@ if (isset($update['message'])) {
         if ($ref_payload && is_numeric($ref_payload) && $ref_payload != $user_id) {
             if (!$data['users'][$user_id]['invited_by']) {
                 $data['users'][$user_id]['invited_by'] = (int)$ref_payload;
-                // Track that referrer has a "pending" potential invite; we count only after gate pass
+                // We credit referrer only after gate pass
             }
         }
 
         $gateText = "First join both channels to move to the next step.";
         sendMessage($chat_id, $gateText, gateKeyboard());
 
+    } elseif (strtolower($text) === 'share' || $text === '/getshare') {
+        // Convenience to get the forwardable message
+        $share = "We are giving YouTube Premium to everyone for 1 month so come and grab the offer.\n\nYour inviter ID: <b>{$user_id}</b>";
+        sendMessage($chat_id, $share, forwardKeyboard($share));
+
     } else {
-        // Any other message → show gate again as gentle default
+        // Gentle default
         sendMessage($chat_id, "Use /start to begin.");
     }
 
@@ -318,9 +315,6 @@ if (isset($update['message'])) {
             $kb = inviteKeyboard($GLOBALS['bot_username'], $user_id);
             editMessageText($chat_id, $mid, $text, $kb);
             answerCallback($cid, "Great! Gate passed ✅");
-
-            // Also send the forwardable promo on pressing Invite (UX hint)
-            // But we’ll only send when user taps explicit "Invite" URL (they’ll return via start deep link).
         }
     }
 
@@ -328,10 +322,7 @@ if (isset($update['message'])) {
     // User pressed "Forward" button (switch_inline_query). We provide the promo content.
     $iq = $update['inline_query'];
     $qid = $iq['id'];
-    $from = $iq['from'];
-    $user_id = $from['id'];
     $query = $iq['query']; // contains the share text we put
-    // We return a single article that, when chosen, sends the same text.
     $result = [
         [
             'type' => 'article',
@@ -351,45 +342,9 @@ if (isset($update['message'])) {
         'cache_time' => 1,
         'is_personal' => true
     ]);
-
-} elseif (isset($update['message']['successful_payment'])) {
-    // Not used here
 }
 
-// ---- Extra: when a referred user taps the Invite link (deep link), they’ll do /start as usual.
-// Provide a command for the user to generate the forwardable message on demand:
-if (isset($update['message']) && isset($update['message']['text']) && $update['message']['text'] === 'Invite') {
-    $msg = $update['message'];
-    $chat_id = $msg['chat']['id'];
-    $from = $msg['from'];
-    $user_id = $from['id'];
-}
-
-// We’ll also handle when a user returns after gate passed and needs the share text:
-if (isset($update['message']) && isset($update['message']['text']) && $update['message']['text'] === '/getshare') {
-    $msg = $update['message'];
-    $chat_id = $msg['chat']['id'];
-    $from = $msg['from'];
-    $user_id = $from['id'];
-
-    $share = "We are giving YouTube Premium to everyone for 1 month so come and grab the offer.\n\nYour inviter ID: <b>{$user_id}</b>";
-    sendMessage($chat_id, $share, forwardKeyboard($share));
-}
-
-// Also: when a user *presses the Invite button* (which is a URL deep link), they land in your bot with /start again.
-// We will proactively send them the share message after they pass the gate and see the “Invite” screen.
-// So add a convenience: if a joined user types 'Share' send the forward UI.
-if (isset($update['message']) && isset($update['message']['text']) && strtolower($update['message']['text']) === 'share') {
-    $msg = $update['message'];
-    $chat_id = $msg['chat']['id'];
-    $from = $msg['from'];
-    $user_id = $from['id'];
-
-    $share = "We are giving YouTube Premium to everyone for 1 month so come and grab the offer.\n\nYour inviter ID: <b>{$user_id}</b>";
-    sendMessage($chat_id, $share, forwardKeyboard($share));
-}
-
-// After every message: if user has met 5 invites, send success gate with admin contact (once)
+// After every message/update: if user has met 5 invites, send success gate with admin contact (once)
 if (isset($update['message'])) {
     $from = $update['message']['from'];
     $chat_id = $update['message']['chat']['id'];
@@ -403,14 +358,7 @@ if (isset($update['message'])) {
 
 saveData($fp, $data);
 
-// ------------- Auto-promo on Invite press -------------
-// There’s no direct callback from pressing a URL button. To make it easy for users:
-// As soon as they pass the gate and see the “Invite” screen, encourage them to type “Share”
-// or we provide a /getshare command above. This is the safest, reliable approach on Telegram.
-
-// ------------- Notes -------------
-// • Counting logic: a referral is credited only when the referred user passes the gate (joins both channels).
-// • “Forward” button uses inline mode (switch_inline_query) so users can easily send your promo to others.
-//   Make sure you’ve enabled Inline Mode for your bot in @BotFather.
+// Notes:
+// • Referral is credited only when the referred user passes the channel gate.
+// • “Forward” button uses inline mode (switch_inline_query). Enable Inline Mode in @BotFather.
 // • For public channels, bot can check membership with getChatMember.
-// • Ensure the bot is *not* privacy mode if needed (usually fine with privacy on for this flow).
