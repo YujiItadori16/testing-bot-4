@@ -33,7 +33,12 @@ ENV BOT_TOKEN="8401609959:AAFGmYh29uJM-JJNUMJc0ByKVfDfQSlILMc" \
     CONTACT_LINK="https://t.me/rk_production_house" \
     WEBHOOK_SECRET="change-this-secret"
 
-EXPOSE 80
+# Allow .htaccess overrides
+RUN sed -i 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf
 
-# Run Apache in foreground
+# Render dynamic port binding
+ENV PORT=8080
+RUN sed -i "s/Listen 80/Listen ${PORT}/" /etc/apache2/ports.conf
+RUN sed -i "s/:80/:${PORT}/g" /etc/apache2/sites-enabled/000-default.conf
+
 CMD ["apache2-foreground"]
