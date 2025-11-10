@@ -1,30 +1,21 @@
 <?php
 // ======================
-// Telegram PHP Bot — Channel Gate + Referrals (no chat commands)
-// Works on Render.com Docker Web Service (webhook-based)
+// Telegram PHP Bot — Channel Gate + Referrals (no extra commands)
+// Works on Render Docker (webhook)
 // ======================
-
-/*
-Env you can set in Render:
-- BOT_TOKEN
-- ADMIN_ID  (kept but unused now; safe to leave)
-- CH1, CH1_LINK
-- CH2, CH2_LINK
-- CONTACT_LINK
-- WEBHOOK_SECRET
-*/
 
 error_reporting(E_ALL & ~E_NOTICE);
 ini_set('display_errors', 0);
 
-$BOT_TOKEN     = getenv('BOT_TOKEN') ?: 'CHANGE_ME';
-$API           = "https://api.telegram.org/bot{$BOT_TOKEN}";
-$CH1           = getenv('CH1') ?: '@bigbumpersaleoffers';
-$CH1_LINK      = getenv('CH1_LINK') ?: 'https://t.me/bigbumpersaleoffers';
-$CH2           = getenv('CH2') ?: '@backupchannelbum';
-$CH2_LINK      = getenv('CH2_LINK') ?: 'https://t.me/backupchannelbum';
-$CONTACT_LINK  = getenv('CONTACT_LINK') ?: 'https://t.me/rk_production_house';
-$WEBHOOK_SECRET= getenv('WEBHOOK_SECRET') ?: 'change-this-secret';
+$BOT_TOKEN      = getenv('BOT_TOKEN') ?: 'CHANGE_ME';
+$API            = "https://api.telegram.org/bot{$BOT_TOKEN}";
+$ADMIN_IDS      = array_map('trim', explode(',', getenv('ADMIN_ID') ?: '')); // not used now
+$CH1            = getenv('CH1') ?: '@bigbumpersaleoffers';
+$CH1_LINK       = getenv('CH1_LINK') ?: 'https://t.me/bigbumpersaleoffers';
+$CH2            = getenv('CH2') ?: '@backupchannelbum';
+$CH2_LINK       = getenv('CH2_LINK') ?: 'https://t.me/backupchannelbum';
+$CONTACT_LINK   = getenv('CONTACT_LINK') ?: 'https://t.me/rk_production_house';
+$WEBHOOK_SECRET = getenv('WEBHOOK_SECRET') ?: 'change-this-secret';
 
 $DATA_FILE = __DIR__ . '/users.json';
 
@@ -41,8 +32,11 @@ function tg($method, $params = []) {
         CURLOPT_TIMEOUT => 30,
     ]);
     $res = curl_exec($ch);
+    if ($res === false) { return ['ok'=>false,'curl_error'=>curl_error($ch)]; }
     curl_close($ch);
-    return json_decode($res, true);
+    $decoded = json_decode($res, true);
+    if (!is_array($decoded)) { return ['ok'=>false,'decode_error'=>'json']; }
+    return $decoded;
 }
 
 function sendMessage($chat_id, $text, $reply_markup = null, $parse_mode = 'HTML') {
@@ -85,20 +79,21 @@ function getMember($channel, $user_id) {
 
 function loadData($file) {
     if (!file_exists($file)) {
-        file_put_contents($file, json_encode(['users'=>[]], JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE));
-        chmod($file, 0664);
+        @file_put_contents($file, json_encode(['users'=>[]], JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE));
+        @chmod($file, 0664);
     }
     $fp = fopen($file, 'c+');
-    if (!$fp) return ['users'=>[]];
+    if (!$fp) return [['users'=>[]], null];
     flock($fp, LOCK_EX);
     $size = filesize($file);
     $raw = $size > 0 ? fread($fp, $size) : '';
     $data = json_decode($raw ?: '{"users":{}}', true);
-    if (!$data) $data = ['users'=>[]];
+    if (!is_array($data)) $data = ['users'=>[]];
     return [$data, $fp];
 }
 
 function saveData($fp, $data) {
+    if (!$fp) return;
     ftruncate($fp, 0);
     rewind($fp);
     fwrite($fp, json_encode($data, JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE));
@@ -115,8 +110,8 @@ function ensureUser(&$data, $user_id) {
     if (!isset($data['users'][$user_id])) {
         $data['users'][$user_id] = [
             'invited_by' => null,
-            'invitees'   => [],   // list of unique user IDs who completed gate
-            'joined_ok'  => false // passed both channels gate
+            'invitees'   => [],   // unique IDs who completed gate
+            'joined_ok'  => false
         ];
     }
 }
@@ -153,6 +148,10 @@ function inviteKeyboard($bot_username, $user_id) {
                 ['text' => 'Invite', 'url' => $inviteLink]
             ],
             [
+                // This sends them the exact promo text with their ID (and a Forward inline button)
+                ['text' => 'Forward', 'callback_data' => 'send_share']
+            ],
+            [
                 ['text' => 'Try Again ✅', 'callback_data' => 'retry_gate']
             ]
         ]
@@ -160,6 +159,7 @@ function inviteKeyboard($bot_username, $user_id) {
 }
 
 function forwardKeyboard($shareText) {
+    // Inline-mode sharing (user taps this and picks a chat)
     return [
         'inline_keyboard' => [
             [
@@ -185,117 +185,101 @@ function checkBothJoined($user_id) {
     $m1 = getMember($CH1, $user_id);
     $m2 = getMember($CH2, $user_id);
 
-    $ok1 = in_array($m1['result']['status'], ['member','administrator','creator','restricted']);
-    $ok2 = in_array($m2['result']['status'], ['member','administrator','creator','restricted']);
+    $ok1 = (isset($m1['ok']) && $m1['ok'] && in_array($m1['result']['status'] ?? '', ['member','administrator','creator','restricted'], true));
+    $ok2 = (isset($m2['ok']) && $m2['ok'] && in_array($m2['result']['status'] ?? '', ['member','administrator','creator','restricted'], true));
 
     return $ok1 && $ok2;
 }
 
-function botUsername() {
+function botUsernameSafe() {
     $me = tg('getMe');
-    return $me['ok'] ? $me['result']['username'] : null;
-}
-
-// ------------- Webhook helper routes -------------
-if (isset($_GET['health'])) {
-    http_response_code(200);
-    exit('OK');
-}
-
-// Set webhook: /index.php?setWebhook=1&secret=WEBHOOK_SECRET&url=FULL_HTTPS_URL
-if (isset($_GET['setWebhook'])) {
-    if (($_GET['secret'] ?? '') !== $WEBHOOK_SECRET) {
-        http_response_code(403);
-        exit('Forbidden');
+    if (isset($me['ok']) && $me['ok'] && isset($me['result']['username'])) {
+        return $me['result']['username'];
     }
-    $url = $_GET['url'] ?? '';
-    if (!$url) {
-        http_response_code(400);
-        exit('Missing url');
+    return 'your_bot';
+}
+
+// -------- Webhook helper routes --------
+if (isset($_GET['health'])) { http_response_code(200); exit('OK'); }
+
+// setWebhook/deleteWebhook guards
+if (isset($_GET['setWebhook']) || isset($_GET['deleteWebhook'])) {
+    $provided = $_GET['secret'] ?? '';
+    if ($provided !== $WEBHOOK_SECRET) { http_response_code(403); exit('Forbidden'); }
+    if (isset($_GET['setWebhook'])) {
+        $url = $_GET['url'] ?? '';
+        if (!$url) { http_response_code(400); exit('Missing url'); }
+        $res = tg('setWebhook', ['url' => $url]);
+        header('Content-Type: application/json'); echo json_encode($res); exit;
+    } else {
+        $res = tg('deleteWebhook');
+        header('Content-Type: application/json'); echo json_encode($res); exit;
     }
-    $res = tg('setWebhook', ['url' => $url]);
-    header('Content-Type: application/json');
-    echo json_encode($res);
-    exit;
 }
 
-// Delete webhook: /index.php?deleteWebhook=1&secret=WEBHOOK_SECRET
-if (isset($_GET['deleteWebhook'])) {
-    if (($_GET['secret'] ?? '') !== $WEBHOOK_SECRET) { http_response_code(403); exit('Forbidden'); }
-    $res = tg('deleteWebhook');
-    header('Content-Type: application/json');
-    echo json_encode($res);
-    exit;
-}
+// -------- Handle updates --------
+$raw = file_get_contents('php://input');
+if (!$raw) { http_response_code(200); echo 'NO-UPDATE'; exit; }
 
-// ------------- Handle updates -------------
-$update = json_decode(file_get_contents('php://input'), true);
-if (!$update) {
-    http_response_code(200);
-    echo 'NO-UPDATE';
-    exit;
-}
+$update = json_decode($raw, true);
+if (!is_array($update)) { http_response_code(200); echo 'BAD-JSON'; exit; }
 
 list($data, $fp) = loadData($DATA_FILE);
 
-$bot_user = tg('getMe');
-$bot_username = $bot_user['ok'] ? $bot_user['result']['username'] : 'your_bot';
+$bot_username = botUsernameSafe();
 
+$threshold = 5;
+
+// ----- Messages -----
 if (isset($update['message'])) {
     $msg = $update['message'];
-    $chat_id = $msg['chat']['id'];
-    $from = $msg['from'];
-    $user_id = $from['id'];
+    $chat_id = $msg['chat']['id'] ?? null;
+    $from = $msg['from'] ?? [];
+    $user_id = $from['id'] ?? null;
     $text = trim($msg['text'] ?? '');
+
+    if (!$chat_id || !$user_id) { saveData($fp, $data); exit; }
 
     ensureUser($data, $user_id);
 
-    // Deep-link referrals: /start <payload>
+    // /start with optional ref id
     if (strpos($text, '/start') === 0) {
         $parts = explode(' ', $text, 2);
         $ref_payload = isset($parts[1]) ? trim($parts[1]) : null;
 
-        // Set invited_by only once, and no self-ref
         if ($ref_payload && is_numeric($ref_payload) && $ref_payload != $user_id) {
             if (!$data['users'][$user_id]['invited_by']) {
                 $data['users'][$user_id]['invited_by'] = (int)$ref_payload;
-                // We credit referrer only after gate pass
             }
         }
 
         $gateText = "First join both channels to move to the next step.";
         sendMessage($chat_id, $gateText, gateKeyboard());
 
-    } elseif (strtolower($text) === 'share' || $text === '/getshare') {
-        // Convenience to get the forwardable message
-        $share = "🎁 *Free YouTube Premium (1 Month)*\n\n".
-                "We are giving YouTube Premium access for FREE. Just join through the link & follow instructions.\n\n".
-                "Your inviter ID: <b>{$user_id}</b>";
-        sendMessage($chat_id, $share, forwardKeyboard($share));
-        
     } else {
-        // Gentle default
+        // keep it minimal
         sendMessage($chat_id, "Use /start to begin.");
     }
+}
 
-} elseif (isset($update['callback_query'])) {
+// ----- Callback buttons -----
+if (isset($update['callback_query'])) {
     $cq = $update['callback_query'];
     $cid = $cq['id'];
-    $from = $cq['from'];
-    $user_id = $from['id'];
-    $message = $cq['message'];
-    $chat_id = $message['chat']['id'];
-    $mid = $message['message_id'];
+    $from = $cq['from'] ?? [];
+    $user_id = $from['id'] ?? null;
+    $message = $cq['message'] ?? [];
+    $chat_id = $message['chat']['id'] ?? null;
+    $mid = $message['message_id'] ?? null;
     $data_cb = $cq['data'] ?? '';
+
+    if (!$chat_id || !$user_id || !$mid) { answerCallback($cid); saveData($fp, $data); exit; }
 
     ensureUser($data, $user_id);
 
     if ($data_cb === 'retry_gate') {
-        // Check membership of both channels
         $joined = false;
-        try {
-            $joined = checkBothJoined($user_id);
-        } catch (Exception $e) {}
+        try { $joined = checkBothJoined($user_id); } catch (Throwable $e) { $joined = false; }
 
         if (!$joined) {
             answerCallback($cid, "Not yet joined both channels. Please join and try again.");
@@ -303,70 +287,40 @@ if (isset($update['message'])) {
         } else {
             $data['users'][$user_id]['joined_ok'] = true;
 
-            // If this user was invited by someone, credit the referrer now (only once)
+            // credit referrer once
             $ref = $data['users'][$user_id]['invited_by'] ?? null;
             if ($ref && $ref != $user_id) {
                 ensureUser($data, $ref);
-                if (!in_array($user_id, $data['users'][$ref]['invitees'])) {
+                if (!in_array($user_id, $data['users'][$ref]['invitees'], true)) {
                     $data['users'][$ref]['invitees'][] = $user_id;
                 }
             }
 
-            // After gate pass → show invite step
-            $count = countUniqueInvites($data, $user_id);
-            $progress = progressBar($count, 5);
-
-            $text = "To get YouTube Premium for 1 month free, you need to invite 5 people.\n\n".
-                    "<b>Your Progress:</b>\n{$progress}\n\n".
-                    "Tap Invite and forward the offer to your friends.";
-            
-            $kb = inviteKeyboard($GLOBALS['bot_username'], $user_id);
+            $text = "To get YouTube premium of 1 month for free. First invite 5 people.";
+            $kb = inviteKeyboard($GLOBALS['bot_username'] ?? $bot_username, $user_id);
             editMessageText($chat_id, $mid, $text, $kb);
             answerCallback($cid, "Great! Gate passed ✅");
         }
-    }
 
-} elseif (isset($update['inline_query'])) {
-    // User pressed "Forward" button (switch_inline_query). We provide the promo content.
-    $iq = $update['inline_query'];
-    $qid = $iq['id'];
-    $query = $iq['query']; // contains the share text we put
-    $result = [
-        [
-            'type' => 'article',
-            'id'   => 'promo1',
-            'title'=> 'Share this offer',
-            'input_message_content' => [
-                'message_text' => $query,
-                'parse_mode'   => 'HTML',
-                'disable_web_page_preview' => true
-            ],
-            'description' => 'Tap to send this message to your friends.'
-        ]
-    ];
-    tg('answerInlineQuery', [
-        'inline_query_id' => $qid,
-        'results' => json_encode($result),
-        'cache_time' => 1,
-        'is_personal' => true
-    ]);
+    } elseif ($data_cb === 'send_share') {
+        $share = "We are giving YouTube Premium to everyone for 1 month so come and grab the offer.\n\nYour inviter ID: <b>{$user_id}</b>";
+        sendMessage($chat_id, $share, forwardKeyboard($share));
+        answerCallback($cid, "Share text ready. Tap Forward, pick a chat, and send!");
+
+    }
 }
 
-// After every message/update: if user has met 5 invites, send success gate with admin contact (once)
+// ----- Success check -----
 if (isset($update['message'])) {
-    $from = $update['message']['from'];
-    $chat_id = $update['message']['chat']['id'];
-    $user_id = $from['id'];
-    ensureUser($data, $user_id);
-
-    if ($data['users'][$user_id]['joined_ok'] && hasMetThreshold($data, $user_id, 5)) {
-        sendMessage($chat_id, "✅ You’ve reached 5 invites! Contact the Admin for premium.", successKeyboard());
+    $from = $update['message']['from'] ?? [];
+    $chat_id = $update['message']['chat']['id'] ?? null;
+    $user_id = $from['id'] ?? null;
+    if ($chat_id && $user_id) {
+        ensureUser($data, $user_id);
+        if ($data['users'][$user_id]['joined_ok'] && hasMetThreshold($data, $user_id, $threshold)) {
+            sendMessage($chat_id, "✅ You’ve reached 5 invites! Contact the Admin for premium.", successKeyboard());
+        }
     }
 }
 
 saveData($fp, $data);
-
-// Notes:
-// • Referral is credited only when the referred user passes the channel gate.
-// • “Forward” button uses inline mode (switch_inline_query). Enable Inline Mode in @BotFather.
-// • For public channels, bot can check membership with getChatMember.
