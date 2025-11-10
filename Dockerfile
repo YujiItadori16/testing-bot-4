@@ -4,12 +4,9 @@ FROM php:8.2-apache
 # Make sure mod_rewrite is on
 RUN a2enmod rewrite
 
-# Recommended PHP settings
-RUN cat > /usr/local/etc/php/conf.d/zz-php.ini <<'PHPINI'
-display_errors=Off
-log_errors=On
-error_log=/var/log/apache2/php-error.log
-PHPINI
+# PHP settings -> log to stderr (Render captures)
+RUN printf "display_errors=Off\nlog_errors=On\nerror_log=/proc/self/fd/2\n" \
+  > /usr/local/etc/php/conf.d/zz-php.ini
 
 # Copy app
 WORKDIR /var/www/html
