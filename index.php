@@ -268,9 +268,11 @@ if (isset($update['message'])) {
 
     } elseif (strtolower($text) === 'share' || $text === '/getshare') {
         // Convenience to get the forwardable message
-        $share = "We are giving YouTube Premium to everyone for 1 month so come and grab the offer.\n\nYour inviter ID: <b>{$user_id}</b>";
+        $share = "🎁 *Free YouTube Premium (1 Month)*\n\n".
+                "We are giving YouTube Premium access for FREE. Just join through the link & follow instructions.\n\n".
+                "Your inviter ID: <b>{$user_id}</b>";
         sendMessage($chat_id, $share, forwardKeyboard($share));
-
+        
     } else {
         // Gentle default
         sendMessage($chat_id, "Use /start to begin.");
