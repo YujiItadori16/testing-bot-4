@@ -1,0 +1,5 @@
+# Force everything to index.php (handy for local dev or Apache hosting)
+RewriteEngine On
+RewriteBase /
+RewriteCond %{REQUEST_URI} !^/index\.php$
+RewriteRule ^.*$ /index.php [L,QSA]

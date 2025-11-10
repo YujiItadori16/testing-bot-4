@@ -1,0 +1,2 @@
+# This file is created so you can tail it locally if you like.
+# In the container we log PHP errors to /var/log/apache2/php-error.log
