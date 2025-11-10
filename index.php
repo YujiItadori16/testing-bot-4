@@ -311,7 +311,13 @@ if (isset($update['message'])) {
             }
 
             // After gate pass → show invite step
-            $text = "To get YouTube premium of 1 month for free. First invite 5 people.";
+            $count = countUniqueInvites($data, $user_id);
+            $progress = progressBar($count, 5);
+
+            $text = "To get YouTube Premium for 1 month free, you need to invite 5 people.\n\n".
+                    "<b>Your Progress:</b>\n{$progress}\n\n".
+                    "Tap Invite and forward the offer to your friends.";
+            
             $kb = inviteKeyboard($GLOBALS['bot_username'], $user_id);
             editMessageText($chat_id, $mid, $text, $kb);
             answerCallback($cid, "Great! Gate passed ✅");
