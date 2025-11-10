@@ -5,11 +5,11 @@ FROM php:8.2-apache
 RUN a2enmod rewrite
 
 # Recommended PHP settings
-RUN { \
-    echo "display_errors=Off"; \
-    echo "log_errors=On"; \
-    echo "error_log=/var/log/apache2/php-error.log"; \
-} > /usr/local/etc/php/conf.d/zz-php.ini
+RUN cat > /usr/local/etc/php/conf.d/zz-php.ini <<'PHPINI'
+display_errors=Off
+log_errors=On
+error_log=/var/log/apache2/php-error.log
+PHPINI
 
 # Copy app
 WORKDIR /var/www/html
