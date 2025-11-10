@@ -274,46 +274,6 @@ if (isset($update['message'])) {
         $gateText = "First join both channels to move to the next step.";
         sendMessage($chat_id, $gateText, gateKeyboard());
 
-    } elseif ($text === '/mylink') {
-        $link = inviteLinkFor($bot_username, $user_id);
-        sendMessage($chat_id, "Your personal invite link:\n{$link}");
-
-    } elseif ($text === '/mystats') {
-        $count = countUniqueInvites($data, $user_id);
-        $threshold = 5;
-        $status = hasMetThreshold($data, $user_id, $threshold) ? "✅ Unlocked" : "🔒 Locked";
-        sendMessage($chat_id, "Your referrals: <b>{$count}</b>/{$threshold}\nStatus: {$status}");
-
-    } elseif (preg_match('/^\/stats\s+(\d+)/', $text, $m)) {
-        // Admin only
-        if (!isAdmin($user_id)) {
-            sendMessage($chat_id, "Not allowed.");
-        } else {
-            $target = $m[1];
-            $count = countUniqueInvites($data, $target);
-            $list  = implode(', ', array_slice($data['users'][$target]['invitees'] ?? [], 0, 10));
-            sendMessage($chat_id, "User {$target} invited <b>{$count}</b> users.\nSample invitees: {$list}");
-        }
-
-    } elseif ($text === '/leaderboard') {
-        // Admin only
-        if (!isAdmin($user_id)) {
-            sendMessage($chat_id, "Not allowed.");
-        } else {
-            // Build top 10
-            $rows = [];
-            foreach ($data['users'] as $uid => $u) {
-                $rows[] = ['uid'=>$uid, 'c'=>count(array_unique($u['invitees'] ?? []))];
-            }
-            usort($rows, fn($a,$b)=>$b['c']<=>$a['c']);
-            $top = array_slice($rows, 0, 10);
-            $lines = [];
-            foreach ($top as $i=>$r) {
-                $lines[] = ($i+1).". {$r['uid']} — {$r['c']}";
-            }
-            sendMessage($chat_id, "<b>Top 10 Referrers</b>\n".($lines?implode("\n",$lines):"No data yet."));
-        }
-
     } else {
         // Any other message → show gate again as gentle default
         sendMessage($chat_id, "Use /start to begin.");
